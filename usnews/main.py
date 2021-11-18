@@ -1,43 +1,21 @@
 import requests
 import lxml.html
 import unicodedata
-from dataclasses import dataclass, is_dataclass
 from typing import Optional
+from pydantic import BaseModel
 
 
-def nested_dataclass(*args, **kwargs):
-    def wrapper(cls):
-        cls = dataclass(cls, **kwargs)
-        original_init = cls.__init__
-
-        def __init__(self, *args, **kwargs):
-            for name, value in kwargs.items():
-                field_type = cls.__annotations__.get(name, None)
-                if is_dataclass(field_type) and isinstance(value, dict):
-                    new_obj = field_type(**value)
-                    kwargs[name] = new_obj
-            original_init(self, *args, **kwargs)
-
-        cls.__init__ = __init__
-        return cls
-
-    return wrapper(args[0]) if args else wrapper
-
-
-@dataclass
-class Ranking:
+class Ranking(BaseModel):
     list: str
-    position: str
+    position: Optional[int] = None
 
 
-@dataclass
-class FacultyRatio:
+class FacultyRatio(BaseModel):
     student: int
     faculty: int
 
 
-@nested_dataclass
-class School:
+class School(BaseModel):
     school_type: str
     is_religious: bool
     website: str
