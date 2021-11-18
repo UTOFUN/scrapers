@@ -89,7 +89,7 @@ def get_general(tree):
         "school_type": general["School Type"].split(", Coed")[0],
         "is_religious": general["Religious Affiliation"] != "None",
         "website": general["School Website"],
-        "phone": "".join([n for n in general["Phone"] if n.isdigit()]),
+        "phone": "".join([n for n in general["Phone"] if n.isnumeric()]),
     }
 
 
@@ -139,7 +139,9 @@ def _get_academic_life_data(tree):
 def get_academic_life(tree):
     academic_life = _get_academic_life_data(tree)
     return {
-        "graduation_rate": int(academic_life["4-year graduation rate"].split("%")[0]),
+        "graduation_rate": int(academic_life["4-year graduation rate"].split("%")[0])
+        if academic_life["4-year graduation rate"].split("%")[0].isnumeric()
+        else None,
         "faculty_ratio": {
             "student": int(academic_life["Student-faculty ratio"].split(":")[0]),
             "faculty": int(academic_life["Student-faculty ratio"].split(":")[1]),
@@ -191,4 +193,4 @@ def get_school_info(url):
 
 
 if __name__ == "__main__":
-    print(get_school_info("https://www.usnews.com/best-colleges/nyu-2785"))
+    print(get_school_info("https://www.usnews.com/best-colleges/nyit-4804"))
