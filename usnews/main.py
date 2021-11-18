@@ -1,9 +1,54 @@
 import requests
 import lxml.html
-import json
 import unicodedata
+from dataclasses import dataclass, is_dataclass
 
-urls = json.load(fp=open("urls.json"))
+
+def nested_dataclass(*args, **kwargs):
+    def wrapper(cls):
+        cls = dataclass(cls, **kwargs)
+        original_init = cls.__init__
+
+        def __init__(self, *args, **kwargs):
+            for name, value in kwargs.items():
+                field_type = cls.__annotations__.get(name, None)
+                if is_dataclass(field_type) and isinstance(value, dict):
+                    new_obj = field_type(**value)
+                    kwargs[name] = new_obj
+            original_init(self, *args, **kwargs)
+
+        cls.__init__ = __init__
+        return cls
+
+    return wrapper(args[0]) if args else wrapper
+
+
+@dataclass
+class Ranking:
+    list: str
+    position: str
+
+
+@dataclass
+class FacultyRatio:
+    student: int
+    faculty: int
+
+
+@nested_dataclass
+class School:
+    school_type: str
+    is_religious: bool
+    website: str
+    phone: str
+    rankings: list[Ranking]
+    acceptance_rate: int
+    graduation_rate: int
+    undergrad_pop: int
+    faculty_ratio: FacultyRatio
+    male_percentage: int
+    estimated_tution: int
+    cost_of_living: int
 
 
 def _get_usnews_tree(url):
@@ -17,6 +62,7 @@ def _get_usnews_tree(url):
 
 
 def _table_elem_to_json(table_elem):
+    """contert table element on page to json"""
     return {
         key: value
         for (key, value) in [
@@ -36,15 +82,41 @@ def _get_general_data(tree):
     return _table_elem_to_json(general_table)
 
 
+def get_general(tree):
+    """get general data from usnews page"""
+    general = _get_general_data(tree)
+    return {
+        "school_type": general["School Type"].split(", Coed")[0],
+        "is_religious": general["Religious Affiliation"] != "None",
+        "website": general["School Website"],
+        "phone": "".join([n for n in general["Phone"] if n.isdigit()]),
+    }
+
+
 def _get_ranking_data(tree):
-    ranking = tree.xpath("//ul[contains(@class, 'RankList')]/li")
+    rankings = tree.xpath("//ul[contains(@class, 'RankList')]/li")
     return [
         {
             "position": node[0].text_content().split("#")[1],
-            "ranking": unicodedata.normalize("NFKD", node[1].text_content()).split(" (")[0],  # remove (tie)
+            "list": unicodedata.normalize("NFKD", node[1].text_content()).split(" (")[0],  # remove (tie)
         }
-        for node in [[el for el in els.xpath("a/*") if el.tag != "span"] for els in ranking]
+        for node in [[el for el in els.xpath("a/*") if el.tag != "span"] for els in rankings]
     ]
+
+
+def get_ranking(tree):
+    rankings = _get_ranking_data(tree)
+    return {
+        "rankings": [
+            Ranking(
+                **{
+                    "list": ranking["list"],
+                    "position": int(ranking["position"]),
+                }
+            )
+            for ranking in rankings
+        ]
+    }
 
 
 def _get_admission_data(tree):
@@ -52,9 +124,27 @@ def _get_admission_data(tree):
     return _table_elem_to_json(admission_table)
 
 
+def get_admission(tree):
+    admission = _get_admission_data(tree)
+    return {
+        "acceptance_rate": int(admission[[key for key in admission.keys() if "acceptance" in key][0]].split("%")[0])
+    }
+
+
 def _get_academic_life_data(tree):
     academic_life_table = tree.xpath("//section[@id='academic-life']/div[2]/div")
     return _table_elem_to_json(academic_life_table)
+
+
+def get_academic_life(tree):
+    academic_life = _get_academic_life_data(tree)
+    return {
+        "graduation_rate": int(academic_life["4-year graduation rate"].split("%")[0]),
+        "faculty_ratio": {
+            "student": int(academic_life["Student-faculty ratio"].split(":")[0]),
+            "faculty": int(academic_life["Student-faculty ratio"].split(":")[1]),
+        },
+    }
 
 
 # undergrade enrollment is not on the overview page
@@ -63,40 +153,42 @@ def _get_student_life_data(student_life_tree):
     return _table_elem_to_json(student_life_table)
 
 
+def get_student_life(student_life_tree):
+    student_life = _get_student_life_data(student_life_tree)
+    return {
+        "undergrad_pop": int(student_life["Total undergraduate enrollment"].split("(")[0].replace(",", "")),
+        "male_percentage": student_life["Degree-seeking student gender distribution"].split(" men")[1].split("%")[0],
+    }
+
+
 def _get_tuition_data(tree):
     tuition_table = tree.xpath("//section[@id='tuition']/div[2]/div")[1:]
     return _table_elem_to_json(tuition_table)
 
 
-def get_school_info(url):
-    tree = _get_usnews_tree(url)
-    general = _get_general_data(tree)
-    ranking = _get_ranking_data(tree)
-    admission = _get_admission_data(tree)
-    academic_life = _get_academic_life_data(tree)
-    student_life = _get_student_life_data(_get_usnews_tree(f"{url}/student-life"))
+def get_tuition(tree):
     tuition = _get_tuition_data(tree)
-
     return {
-        "school_type": general["School Type"].split(", Coed")[0],
-        "is_religious": general["Religious Affiliation"] != "None",
-        "website": general["School Website"],
-        "phone": "".join([n for n in general["Phone"] if n.isdigit()]),
-        "ranking": {
-            "ranking": ranking[0]["ranking"],
-            "position": ranking[0]["position"],
-        },
-        "acceptance_rate": admission[[key for key in admission.keys() if "acceptance" in key][0]].split("%")[0],
-        "graduation_rate": academic_life["4-year graduation rate"].split("%")[0],
-        "undergrad_pop": student_life["Total undergraduate enrollment"].split("(")[0].replace(",", ""),
-        "faculty_ratio": {
-            "student": academic_life["Student-faculty ratio"].split(":")[0],
-            "faculty": academic_life["Student-faculty ratio"].split(":")[1],
-        },
-        "male_percentage": student_life["Degree-seeking student gender distribution"].split(" men")[1].split("%")[0],
         "estimated_tution": tuition["Tuition and fees"].split("(")[0].replace(",", "").replace("$", ""),
         "cost_of_living": tuition["Room and board"].split("(")[0].replace(",", "").replace("$", ""),
     }
 
 
-print(get_school_info("https://www.usnews.com/best-colleges/nyu-2785"))
+def get_school_info(url):
+    tree = _get_usnews_tree(url)
+    student_life_tree = _get_usnews_tree(f"{url}/student-life")
+
+    return School(
+        **{
+            **get_general(tree),
+            **get_ranking(tree),
+            **get_admission(tree),
+            **get_academic_life(tree),
+            **get_student_life(student_life_tree),
+            **get_tuition(tree),
+        }
+    )
+
+
+if __name__ == "__main__":
+    print(get_school_info("https://www.usnews.com/best-colleges/nyu-2785"))
