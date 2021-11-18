@@ -2,6 +2,7 @@ import requests
 import lxml.html
 import unicodedata
 from dataclasses import dataclass, is_dataclass
+from typing import Optional
 
 
 def nested_dataclass(*args, **kwargs):
@@ -43,12 +44,14 @@ class School:
     phone: str
     rankings: list[Ranking]
     acceptance_rate: int
-    graduation_rate: int
+    graduation_rate: Optional[int]
     undergrad_pop: int
     faculty_ratio: FacultyRatio
     male_percentage: int
-    estimated_tution: int
     cost_of_living: int
+    estimated_tution: Optional[int] = None
+    estimated_tution_in_state: Optional[int] = None
+    estimated_tution_out_of_state: Optional[int] = None
 
 
 def _get_usnews_tree(url):
@@ -97,7 +100,7 @@ def _get_ranking_data(tree):
     rankings = tree.xpath("//ul[contains(@class, 'RankList')]/li")
     return [
         {
-            "position": node[0].text_content().split("#")[1],
+            "position": node[0].text_content().replace("#", ""),
             "list": unicodedata.normalize("NFKD", node[1].text_content()).split(" (")[0],  # remove (tie)
         }
         for node in [[el for el in els.xpath("a/*") if el.tag != "span"] for els in rankings]
@@ -106,17 +109,21 @@ def _get_ranking_data(tree):
 
 def get_ranking(tree):
     rankings = _get_ranking_data(tree)
-    return {
-        "rankings": [
-            Ranking(
-                **{
-                    "list": ranking["list"],
-                    "position": int(ranking["position"]),
-                }
-            )
-            for ranking in rankings
-        ]
-    }
+    return (
+        {
+            "rankings": [
+                Ranking(
+                    **{
+                        "list": ranking["list"],
+                        "position": int(ranking["position"]) if ranking["position"].isnumeric() else None,
+                    }
+                )
+                for ranking in rankings
+            ]
+        }
+        if rankings
+        else None
+    )
 
 
 def _get_admission_data(tree):
@@ -170,10 +177,23 @@ def _get_tuition_data(tree):
 
 def get_tuition(tree):
     tuition = _get_tuition_data(tree)
-    return {
-        "estimated_tution": tuition["Tuition and fees"].split("(")[0].replace(",", "").replace("$", ""),
-        "cost_of_living": tuition["Room and board"].split("(")[0].replace(",", "").replace("$", ""),
-    }
+    if "Tuition and fees" in tuition.keys():
+        return {
+            "estimated_tution": tuition["Tuition and fees"].split("(")[0].replace(",", "").replace("$", ""),
+            "cost_of_living": tuition["Room and board"].split("(")[0].replace(",", "").replace("$", ""),
+        }
+    else:
+        return {
+            "estimated_tution_in_state": tuition["In-state tuition and fees"]
+            .split("(")[0]
+            .replace(",", "")
+            .replace("$", ""),
+            "estimated_tution_out_of_state": tuition["Out-of-state tuition and fees"]
+            .split("(")[0]
+            .replace(",", "")
+            .replace("$", ""),
+            "cost_of_living": tuition["Room and board"].split("(")[0].replace(",", "").replace("$", ""),
+        }
 
 
 def get_school_info(url):
@@ -193,4 +213,4 @@ def get_school_info(url):
 
 
 if __name__ == "__main__":
-    print(get_school_info("https://www.usnews.com/best-colleges/nyit-4804"))
+    print(get_school_info("https://www.usnews.com/best-colleges/fashion-institute-of-technology-2866"))
